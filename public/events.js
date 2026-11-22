@@ -72,9 +72,7 @@ function bindEvents({ go, render, renderCapture, showRoute, newTake, openSession
     'export-preferences':()=>{
       try {
         const blob = new Blob([serializePreferencesBackup(prefs)], { type:'application/json' });
-        const url = URL.createObjectURL(blob);
-        downloadFile(url, 'rehearsal-practice-backup.json');
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        downloadFile(blob, 'rehearsal-practice-backup.json');
       } catch (error) { notifyError(error); }
     },
     'import-preferences':()=>$('#preferences-file').click(),
@@ -196,9 +194,13 @@ function bindEvents({ go, render, renderCapture, showRoute, newTake, openSession
       const url=URL.createObjectURL(file);
       const video=file.type.startsWith('video/');
       const modal=dialog('Unsaved take',`<p class="info">Save this take before closing the app.</p><${video?'video':'audio'} controls style="width:100%;max-height:260px" src="${url}"></${video?'video':'audio'}><div class="dialog-actions">${button('download','Download original','raw-unsaved')}${button('trash','Discard unsaved take','discard-unsaved','danger')}</div>`);
-      modal.addEventListener('close',()=>URL.revokeObjectURL(url),{once:true});
+      const download = modal.querySelector('[data-action="raw-unsaved"]');
+      download.onclick = () => downloadFile(file, file.name || state.pending.capture.filename);
+      modal.addEventListener('close', () => {
+        download.onclick = null;
+        URL.revokeObjectURL(url);
+      }, { once:true });
     },
-    'raw-unsaved':()=>{const media=$('#dialog audio,#dialog video'); if(media&&state.pending) downloadFile(media.src,state.pending.file?.name || state.pending.capture.filename); },
     'discard-unsaved':()=>{
       if (state.pending?.capture) { actions['discard-recording']({ dataset:{ id:state.pending.capture.id } }); return; }
       state.pending=null; $('#dialog').close(); render(); toast('Unsaved take discarded.');

@@ -10,6 +10,8 @@ mod server;
 mod sessions;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod download;
 #[cfg(windows)]
 mod webview_api;
 #[cfg(all(windows, not(feature = "full-media")))]
@@ -291,26 +293,8 @@ fn window(
                 .context("GTK window has no content area.")?,
         )
         .context("Linux could not open the WebKitGTK runtime.")?;
-    // WKWebView only saves `<a download>` files when the app handles them.
-    // Ask where to save, as Safari does when set to ask.
     #[cfg(target_os = "macos")]
-    let builder = builder
-        .with_download_started_handler(|_, destination| match macos::choose_save_path(destination) {
-            Some(path) => {
-                *destination = path;
-                true
-            }
-            None => false,
-        })
-        .with_download_completed_handler(|_, path, success| {
-            if !success {
-                let name = path.as_deref().and_then(Path::file_name)
-                    .map_or_else(|| "The file".into(), |name| name.to_string_lossy().into_owned());
-                macos::show_error("Download failed", &format!("{name} could not be saved."));
-            }
-        });
-    #[cfg(target_os = "macos")]
-    let webview = builder
+    let webview = macos::with_downloads(builder)
         .build(&window)
         .context("macOS could not open its web view.")?;
     #[cfg(target_os = "linux")]

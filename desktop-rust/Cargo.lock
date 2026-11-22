@@ -2411,6 +2411,7 @@ dependencies = [
  "symphonia-opus",
  "tao",
  "tar",
+ "tempfile",
  "time",
  "tokio",
  "tokio-util",

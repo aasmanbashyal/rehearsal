@@ -109,7 +109,7 @@ pub(crate) fn choose_folder() -> Option<PathBuf> {
 
 /// Asks where to save a download. `suggested` is the default destination in
 /// Downloads; the panel starts there with the page's file name.
-pub(crate) fn choose_save_path(suggested: &Path) -> Option<PathBuf> {
+fn choose_save_path(suggested: &Path) -> Option<PathBuf> {
     let mtm = MainThreadMarker::new()?;
     let panel = NSSavePanel::savePanel(mtm);
     panel.setCanCreateDirectories(true);
@@ -123,6 +123,39 @@ pub(crate) fn choose_save_path(suggested: &Path) -> Option<PathBuf> {
         return None;
     }
     panel.URL()?.to_file_path()
+}
+
+pub(crate) fn with_downloads(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+    use crate::download::PendingExport;
+    use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+    // Wry returns the original URL on completion, including for blob downloads.
+    // downloadFile creates a distinct URL for each click.
+    let pending = Rc::new(RefCell::new(HashMap::new()));
+    let started = Rc::clone(&pending);
+    builder
+        .with_download_started_handler(move |url, destination| {
+            let Some(selected) = choose_save_path(destination) else { return false };
+            match PendingExport::new(selected) {
+                Ok(export) => {
+                    *destination = export.staging_path();
+                    started.borrow_mut().insert(url, export);
+                    true
+                }
+                Err(error) => {
+                    show_error("Download failed", &error.to_string());
+                    false
+                }
+            }
+        })
+        .with_download_completed_handler(move |url, _, success| {
+            let Some(export) = pending.borrow_mut().remove(&url) else { return };
+            if !success {
+                show_error("Download failed", &format!("Could not save {}.", export.destination.display()));
+            } else if let Err(error) = export.finish() {
+                show_error("Download failed", &format!("Could not save {}: {error}", export.destination.display()));
+            }
+        })
 }
 
 /// The `CFBundleVersion` of the WebKit this process loaded, such as

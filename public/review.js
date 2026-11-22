@@ -196,8 +196,7 @@ function playAt(seconds) {
 function exportTranscript(type) {
   if(!state.active?.segments.length) return;
   const raw=type==='srt' ? state.active.segments.map((s,i)=>`${i+1}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${s.text}`).join('\n\n')+'\n' : plain(state.active);
-  const url=URL.createObjectURL(new Blob([raw],{type:'text/plain;charset=utf-8'}));
-  downloadFile(url,`${fileStem(state.active.title)}.${type}`); setTimeout(()=>URL.revokeObjectURL(url),5000);
+  downloadFile(new Blob([raw],{type:'text/plain;charset=utf-8'}), `${fileStem(state.active.title)}.${type}`);
 }
 
 export { bindPlayer, exportTranscript, filterTranscript, playAt, refreshTranscript, reviewHTML };

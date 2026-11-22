@@ -172,6 +172,9 @@ impl Models {
     }
 
     async fn install(&self, model: &Model) -> Result<()> {
+        // The archive, model downloads and published engines share this profile.
+        // Hold the OS lock from the readiness checks through the final renames.
+        let _install_lock = lock_install(&self.root).await?;
         if self.engine().is_none() {
             let (platform, library, checksum) =
                 ENGINE.context("Install a compatible transcribe.cpp engine first.")?;
@@ -179,19 +182,14 @@ impl Models {
             let url = format!(
                 "https://github.com/handy-computer/transcribe.cpp/releases/download/v{VERSION}/{name}"
             );
-            let file = self.root.join(name);
-            self.fetch(&url, &file, checksum, "engine").await?;
+            let work = tempfile::tempdir_in(&self.root)?;
+            let archive = work.path().join(name);
+            self.fetch(&url, &archive, checksum, "engine").await?;
             let target = self.root.join(format!("engine-{VERSION}"));
-            // Each install unpacks into its own folder, so two app instances
-            // sharing a data folder never clean up each other's files.
-            let work = self.root.join(format!("engine-{VERSION}.{platform}.{}.incoming", std::process::id()));
-            let archive = file.clone();
-            let unpacked = work.clone();
-            let result = tokio::task::spawn_blocking(move || -> Result<()> {
-                std::fs::create_dir_all(&unpacked)?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
                 let reader = flate2::read::GzDecoder::new(std::fs::File::open(archive)?);
-                tar::Archive::new(reader).unpack(&unpacked)?;
-                let engine = unpacked.join(format!("transcribe-native-{platform}"));
+                tar::Archive::new(reader).unpack(work.path())?;
+                let engine = work.path().join(format!("transcribe-native-{platform}"));
                 if !engine.join(library).is_file() {
                     bail!("No speech engine found in the archive.");
                 }
@@ -202,16 +200,15 @@ impl Models {
                 std::fs::create_dir_all(&target)?;
                 let installed = target.join(format!("transcribe-native-{platform}"));
                 if installed.exists() {
-                    // engine() found no library here, so this copy is incomplete.
+                    if installed.join(library).is_file() {
+                        return Ok(());
+                    }
                     std::fs::remove_dir_all(&installed)?;
                 }
                 std::fs::rename(&engine, installed)?;
                 Ok(())
             })
-            .await;
-            let _ = tokio::fs::remove_file(file).await;
-            let _ = tokio::fs::remove_dir_all(work).await;
-            result??;
+            .await??;
         }
         if !self.installed(model) {
             let url = format!(
@@ -340,11 +337,58 @@ impl Models {
     }
 }
 
+async fn lock_install(root: &Path) -> Result<std::fs::File> {
+    tokio::fs::create_dir_all(root).await?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("model-install.lock"))?;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+    }
+}
+
 fn valid_file(root: &Path, model: &Model) -> bool {
     root.join("models")
         .join(&model.filename)
         .metadata()
         .is_ok_and(|file| file.len() == model.size)
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn overlapping_installs_recheck_the_engine_and_model_after_the_lock() -> Result<()> {
+        let Some((platform, library, _)) = ENGINE else { return Ok(()) };
+        let root = tempfile::tempdir()?;
+        let first = lock_install(root.path()).await?;
+        let models = Models::new(root.path().to_owned(), reqwest::Client::new());
+        let mut model = built_in().remove(0);
+        model.size = 4;
+        let second = models.install(&model);
+        tokio::pin!(second);
+        assert!(tokio::time::timeout(Duration::from_millis(50), &mut second).await.is_err());
+
+        let engine = root.path().join(format!("engine-{VERSION}/transcribe-native-{platform}"));
+        std::fs::create_dir_all(&engine)?;
+        std::fs::write(engine.join(library), b"first engine")?;
+        std::fs::create_dir_all(root.path().join("models"))?;
+        std::fs::write(models.file(&model), b"data")?;
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(5), second).await??;
+        assert_eq!(std::fs::read(engine.join(library))?, b"first engine");
+        Ok(())
+    }
 }
 
 fn merge(entries: &mut Vec<Model>, model: Model, root: &Path) {
