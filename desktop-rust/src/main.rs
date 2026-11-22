@@ -8,6 +8,10 @@ mod models;
 mod native_audio;
 mod server;
 mod sessions;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod download;
 #[cfg(windows)]
 mod webview_api;
 #[cfg(all(windows, not(feature = "full-media")))]
@@ -16,7 +20,7 @@ mod windows_media;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 enum UiEvent {
     Command(String),
     #[cfg(windows)]
@@ -37,6 +41,10 @@ fn main() -> std::process::ExitCode {
         #[cfg(windows)]
         if !worker && !headless {
             message("Rehearsal could not start", &format!("{error:#}"), 0x10);
+        }
+        #[cfg(target_os = "macos")]
+        if !worker && !headless {
+            macos::show_error("Rehearsal could not start", &format!("{error:#}"));
         }
         std::process::ExitCode::FAILURE
     } else {
@@ -96,16 +104,21 @@ fn start(headless: bool) -> Result<()> {
         println!("{url}");
         return runtime.block_on(service)?.map_err(Into::into);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     return window(root, url, runtime, service);
-    #[cfg(not(target_os = "linux"))]
-    bail!("The desktop window is available on Windows and Linux. Use --serve for browser testing.");
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    bail!("The desktop window is available on Windows, Linux and macOS. Use --serve for browser testing.");
 }
 
 fn data_directory() -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     return Ok(gtk::glib::user_data_dir().join("rehearse"));
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return Ok(PathBuf::from(
+        std::env::var_os("HOME").context("Could not find your home folder.")?,
+    )
+    .join("Library/Application Support/Rehearse"));
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     Ok(if let Some(path) = std::env::var_os("LOCALAPPDATA") {
         PathBuf::from(path).join("Rehearse")
     } else {
@@ -144,22 +157,29 @@ fn lock_desktop(root: &Path) -> Result<Option<std::fs::File>> {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn window(
     root: PathBuf,
     url: String,
     runtime: tokio::runtime::Runtime,
     #[cfg(windows)] studio: std::sync::Arc<server::Studio>,
     #[cfg(windows)] data_lock: std::fs::File,
-    #[cfg(target_os = "linux")] service: tokio::task::JoinHandle<std::io::Result<()>>,
+    #[cfg(not(windows))] service: tokio::task::JoinHandle<std::io::Result<()>>,
 ) -> Result<()> {
     use tao::{
         dpi::LogicalSize,
-        event::{Event, WindowEvent},
+        event::{Event, StartCause, WindowEvent},
         event_loop::{ControlFlow, EventLoopBuilder},
         window::WindowBuilder,
     };
     use wry::{NewWindowResponse, PermissionKind, PermissionResponse, WebContext, WebViewBuilder};
+    #[cfg(target_os = "macos")]
+    if let Some(found) = server::loaded_webkit() {
+        let (minimum, safari) = server::MINIMUM_WEBKIT;
+        if found < minimum {
+            bail!("Rehearsal needs Safari {safari} or later. Install the latest macOS or Safari update from System Settings > General > Software Update, then open Rehearsal again.");
+        }
+    }
     #[cfg(target_os = "linux")]
     use {
         tao::platform::unix::WindowExtUnix,
@@ -194,9 +214,22 @@ fn window(
             Icon::from_resource(101, Some(tao::dpi::PhysicalSize::new(48, 48))).ok(),
         );
     let window = builder.build(&event_loop)?;
+    #[cfg(target_os = "macos")]
+    macos::install_menu();
     #[cfg(target_os = "linux")]
     gtk::prelude::GtkWindowExt::set_icon_name(window.gtk_window(), Some("rehearse"));
     let proxy = event_loop.create_proxy();
+    #[cfg(target_os = "macos")]
+    {
+        // Quit from the menu or Dock runs the close button's unsaved-take check.
+        let quit = std::sync::Mutex::new(event_loop.create_proxy());
+        macos::guard_termination(move || {
+            let _ = quit
+                .lock()
+                .unwrap()
+                .send_event(UiEvent::Command("window-close".into()));
+        });
+    }
     let navigation = url.clone();
     let ipc_origin = url.clone();
     let builder = WebViewBuilder::new_with_web_context(&mut context)
@@ -205,7 +238,7 @@ fn window(
         .with_permission_handler(|kind| match kind {
             // Only this bundled page can load here. Capture starts from Record.
             PermissionKind::Microphone | PermissionKind::Camera => PermissionResponse::Allow,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             PermissionKind::DisplayCapture => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
         })
@@ -260,6 +293,10 @@ fn window(
                 .context("GTK window has no content area.")?,
         )
         .context("Linux could not open the WebKitGTK runtime.")?;
+    #[cfg(target_os = "macos")]
+    let webview = macos::with_downloads(builder)
+        .build(&window)
+        .context("macOS could not open its web view.")?;
     #[cfg(target_os = "linux")]
     if let Some(settings) = webview.webview().settings() {
         settings.set_enable_media_stream(true);
@@ -273,14 +310,36 @@ fn window(
     )
     .context("Could not connect the window to Rehearsal.")?;
     webview.load_url(&url)?;
+    // The page answers the unsaved-take check over IPC. If it has not answered
+    // by this deadline (it failed to load or its process exited), ask natively,
+    // so neither the window nor a pending Quit or logout waits forever.
+    const CLOSE_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let mut closing = false;
+    let mut close_deadline: Option<std::time::Instant> = None;
     #[cfg(windows)]
     let mut maximized = window.is_maximized();
     event_loop.run(move |event, _, flow| {
         let _keep_alive = (&runtime, &context, &window);
         #[cfg(windows)]
         let _keep_data_lock = &data_lock;
-        *flow = ControlFlow::Wait;
+        *flow = close_deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
+        if matches!(&event, Event::NewEvents(StartCause::ResumeTimeReached { .. }))
+            && closing && close_deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            closing = false;
+            close_deadline = None;
+            *flow = ControlFlow::Wait;
+            if confirm_unresponsive_close(&window) {
+                #[cfg(not(windows))]
+                service.abort();
+                #[cfg(target_os = "macos")]
+                macos::finish_termination(true);
+                *flow = ControlFlow::Exit;
+            } else {
+                #[cfg(target_os = "macos")]
+                macos::finish_termination(false);
+            }
+            return;
+        }
         if matches!(&event, Event::WindowEvent { event: WindowEvent::CloseRequested, .. })
             || matches!(&event, Event::UserEvent(UiEvent::Command(command)) if command == "window-close") {
             if !closing {
@@ -288,9 +347,15 @@ fn window(
                 if webview.evaluate_script(
                     "window.ipc.postMessage(window.dispatchEvent(new Event('beforeunload', { cancelable: true })) ? 'close' : 'confirm-close');",
                 ).is_err() {
-                    #[cfg(target_os = "linux")]
+                    #[cfg(not(windows))]
                     service.abort();
+                    #[cfg(target_os = "macos")]
+                    macos::finish_termination(true);
                     *flow = ControlFlow::Exit;
+                } else {
+                    let deadline = std::time::Instant::now() + CLOSE_REPLY_TIMEOUT;
+                    close_deadline = Some(deadline);
+                    *flow = ControlFlow::WaitUntil(deadline);
                 }
             }
             return;
@@ -298,10 +363,18 @@ fn window(
         match event {
             Event::UserEvent(UiEvent::Command(choice)) if closing && matches!(choice.as_str(), "close" | "confirm-close") => {
                 closing = false;
+                close_deadline = None;
+                *flow = ControlFlow::Wait;
                 if choice == "close" || confirm_close(&window) {
-                    #[cfg(target_os = "linux")]
+                    #[cfg(not(windows))]
                     service.abort();
+                    #[cfg(target_os = "macos")]
+                    macos::finish_termination(true);
                     *flow = ControlFlow::Exit;
+                } else {
+                    // Cancel keeps the take recording, including after Quit.
+                    #[cfg(target_os = "macos")]
+                    macos::finish_termination(false);
                 }
             }
             Event::UserEvent(UiEvent::Command(command)) if command == "choose-folder" => {
@@ -343,7 +416,7 @@ fn window_state(maximized: bool) -> String {
     )
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn studio_page(origin: &str, page: &str) -> bool {
     page.strip_prefix(origin)
         .is_some_and(|rest| matches!(rest.split('#').next(), Some("" | "/" | "/index.html")))
@@ -503,4 +576,29 @@ fn open_external(url: &str) {
             1,
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+fn choose_folder(_window: &tao::window::Window) -> Option<PathBuf> {
+    macos::choose_folder()
+}
+
+#[cfg(target_os = "macos")]
+fn confirm_unresponsive_close(_window: &tao::window::Window) -> bool {
+    macos::confirm_unresponsive_close()
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn confirm_unresponsive_close(window: &tao::window::Window) -> bool {
+    confirm_close(window)
+}
+
+#[cfg(target_os = "macos")]
+fn confirm_close(_window: &tao::window::Window) -> bool {
+    macos::confirm_close()
+}
+
+#[cfg(target_os = "macos")]
+fn open_external(url: &str) {
+    macos::open_external(url);
 }

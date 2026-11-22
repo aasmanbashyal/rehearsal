@@ -42,6 +42,7 @@ Recordings are written to disk in chunks during capture. If writing fails, captu
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\Rehearse` |
 | Linux | `${XDG_DATA_HOME:-$HOME/.local/share}/rehearse` |
+| macOS | `~/Library/Application Support/Rehearse` |
 | Browser | `.cadence` in the checkout |
 
 Back up your recording folders to preserve takes, scripts, and feedback. The latest script draft, appearance, and per-take practice marks live in the browser or webview profile.

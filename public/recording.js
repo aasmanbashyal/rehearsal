@@ -3,7 +3,7 @@ import { drawMeter, meterColumns } from './recorder-display.js';
 import { $, fmt, formatStorage, notifyError, toast } from './ui.js';
 import { modelReady, selectedModel, state, upsert } from './state.js';
 import { meterStyle, updateElapsedClock } from './recorder-view.js';
-import { captureModes, captureOpen, chooseScreen, prompterMode, usesCamera, usesScreen } from './capture-options.js';
+import { canShareScreen, captureModes, captureOpen, chooseScreen, screenUnavailableMessage, prompterMode, usesCamera, usesScreen } from './capture-options.js';
 import { createCamera } from './camera.js';
 import { prefs } from './preferences.js';
 import { resetPreparation } from './topics.js';
@@ -117,7 +117,7 @@ function createRecorder({ renderCapture, openSession, go }) {
     const script = inPrompter ? state.activeScript : '';
     const hideBackground = inPrompter ? prefs.prompterHideBackground : prefs.hideBackground;
     const cue = inPrompter ? null : state.recordingCue;
-    if (screen && !navigator.mediaDevices.getDisplayMedia) { toast('Screen recording is available in a supported desktop browser.', true); return; }
+    if (screen && !canShareScreen()) { toast(screenUnavailableMessage(), true); return; }
     resetPreparation();
     state.phase='permission'; renderCapture();
     const captureStatus = $('#capture-status');
@@ -159,8 +159,9 @@ function createRecorder({ renderCapture, openSession, go }) {
       }
       const vp8 = 'video/webm;codecs=vp8,opus', vp9 = 'video/webm;codecs=vp9,opus';
       const supported = videoMode ? [...(hasCamera ? [vp8, vp9] : [vp9, vp8]), 'video/mp4'] : ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'];
-      if (state.app.lightMedia && state.app.platform === 'windows') {
+      if (state.app.lightMedia && ['windows', 'macos'].includes(state.app.platform)) {
         // An unconstrained MP4 can contain VP9 and Opus, which the Windows reader may miss.
+        // On macOS, H.264 and AAC in MP4 play and seek natively in WebKit.
         supported.unshift(videoMode ? 'video/mp4;codecs=avc1,mp4a.40.2' : 'audio/mp4;codecs=mp4a.40.2');
       }
       const mimeType=supported.find(type=>MediaRecorder.isTypeSupported(type));

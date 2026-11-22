@@ -1,7 +1,7 @@
 import { $, button, escape, fmt, heading, icon, iconButton } from './ui.js';
 import { modelReady, state } from './state.js';
 import { cueHints, targetSeconds } from './topics.js';
-import { canShareScreen, captureModes, permissionStatus, usesCamera, usesScreen } from './capture-options.js';
+import { canShareScreen, screenUnavailableMessage, captureModes, permissionStatus, usesCamera, usesScreen } from './capture-options.js';
 import { drawClock } from './recorder-display.js';
 import { prefs } from './preferences.js';
 import { cueCards } from './cue-cards.js';
@@ -80,7 +80,7 @@ function recorderHTML() {
   const locked = state.phase !== 'idle';
   const switcher = `<div class="switch" role="group" aria-label="Recording mode">${Object.entries(captureModes).map(([value, [symbol, label]]) => {
     const unsupported = usesScreen(value) && !canShareScreen();
-    return `<button type="button" data-action="mode" data-kind="${value}" aria-pressed="${mode === value}" ${locked || unsupported ? 'disabled' : ''} ${unsupported ? 'title="Screen recording requires a supported desktop browser."' : ''}>${icon(symbol)}${label}</button>`;
+    return `<button type="button" data-action="mode" data-kind="${value}" aria-pressed="${mode === value}" ${locked || unsupported ? 'disabled' : ''} ${unsupported ? `title="${screenUnavailableMessage()}"` : ''}>${icon(symbol)}${label}</button>`;
   }).join('')}</div>`;
   const controls = `<div class="capture-foot">
       ${recordButton()}

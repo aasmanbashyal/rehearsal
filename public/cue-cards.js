@@ -1,8 +1,12 @@
-import data from './cue-data.json' with { type: 'json' };
+let data = { difficulties:{}, categories:{}, cueCards:[] };
+export let { difficulties, categories, cueCards } = data;
 
-export const { difficulties } = data;
-export let categories = data.categories;
-export let cueCards = data.cueCards;
+export async function loadCueCards() {
+  const response = await fetch(new URL('./cue-data.json', import.meta.url));
+  if (!response.ok) throw new Error('Could not load the cue cards.');
+  data = await response.json();
+  ({ difficulties, categories, cueCards } = data);
+}
 
 export function setCustomTopics(topics = []) {
   categories = topics.length ? { ...data.categories, custom:'My topics' } : data.categories;

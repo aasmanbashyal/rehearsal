@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { migratePracticeMarks, practicePageSize } from './practice.js';
 import { $, icon, notifyError, toast } from './ui.js';
-import { cueCards, setCustomTopics } from './cue-cards.js';
+import { cueCards, loadCueCards, setCustomTopics } from './cue-cards.js';
 import { cueCategory, cueDifficulty, drawPreparation, drawTopic, resetPreparation, targetSeconds, topicsHTML } from './topics.js';
 import { prefs, savePrefs } from './preferences.js';
 import { meterStyle, retryControlsHTML, studioHTML, updateElapsedClock } from './recorder-view.js';
@@ -187,7 +187,7 @@ bindEvents({ go, render, renderCapture, showRoute, newTake, openSession, record,
 
 (async()=>{
   try {
-    state.app = await api('/state');
+    [state.app] = await Promise.all([api('/state'), loadCueCards()]);
     setCustomTopics(state.app.customTopics);
     if (Array.isArray(prefs.practicedWords) && prefs.practicedWords.length && !prefs.legacyPracticeTakes) {
       prefs.legacyPracticeTakes = state.app.sessions.filter(session => session.script && session.segments?.length).map(session => session.id);

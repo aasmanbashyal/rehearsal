@@ -213,6 +213,7 @@ async fn dispatch(studio: &Arc<Studio>, req: Request) -> Result<Response> {
             status["mediaReady"] = studio.media.ready().into();
             status["lightMedia"] = (!cfg!(feature = "full-media")).into();
             status["platform"] = std::env::consts::OS.into();
+            status["screenCapture"] = (!studio.desktop || desktop_screen_capture()).into();
             status["desktop"] = studio.desktop.into();
             status["sessions"] = Value::Array(sessions);
             status["customTopics"] = json!(studio.topics.list());
@@ -1253,4 +1254,45 @@ pub(crate) struct FileSlice {
     pub file: Arc<std::fs::File>,
     pub start: u64,
     pub len: u64,
+}
+
+/// Safari 17.6 (WebKit 618.3) fixed `getDisplayMedia` in apps whose web view
+/// answers media capture permission requests, as wry does
+/// (https://bugs.webkit.org/show_bug.cgi?id=274896). It shipped for macOS 12
+/// to 14, so the loaded WebKit decides this, not the macOS version.
+#[cfg(target_os = "macos")]
+fn desktop_screen_capture() -> bool {
+    use std::sync::LazyLock;
+    static SUPPORTED: LazyLock<bool> =
+        LazyLock::new(|| loaded_webkit().is_some_and(|version| version >= (618, 3)));
+    *SUPPORTED
+}
+
+#[cfg(not(target_os = "macos"))]
+fn desktop_screen_capture() -> bool {
+    true
+}
+
+/// The oldest WebKit the page runs on, as (build, Safari release). Safari 16.2
+/// added `color-mix()`, used by the theme colors; it also covers container
+/// queries, `AbortSignal.timeout()` (16.0) and `Object.hasOwn()`, `:has()` and
+/// `<dialog>` (15.4).
+#[cfg(target_os = "macos")]
+pub(crate) const MINIMUM_WEBKIT: ((u32, u32), &str) = ((614, 3), "16.2");
+
+#[cfg(target_os = "macos")]
+pub(crate) fn loaded_webkit() -> Option<(u32, u32)> {
+    crate::macos::webkit_version()
+        .as_deref()
+        .and_then(parse_webkit_version)
+}
+
+/// Reads a WebKit `CFBundleVersion` such as "19618.3.11.11.5" as (618, 3). The
+/// digits before the last three of the first part only name the macOS release.
+#[cfg(any(target_os = "macos", test))]
+fn parse_webkit_version(text: &str) -> Option<(u32, u32)> {
+    let mut parts = text.trim().split('.');
+    let build: u32 = parts.next()?.parse().ok()?;
+    let minor = parts.next().map_or(Some(0), |part| part.parse().ok())?;
+    Some((build % 1000, minor))
 }

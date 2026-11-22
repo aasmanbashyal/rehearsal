@@ -3,7 +3,7 @@ import { prefs, savePrefs } from './preferences.js';
 import { $, button, escape, fmt, heading } from './ui.js';
 import { state } from './state.js';
 import { libraryRoute } from './library.js';
-import { chooseScreen, usesScreen } from './capture-options.js';
+import { canShareScreen, chooseScreen, screenUnavailableMessage, usesScreen } from './capture-options.js';
 
 let preparation = null;
 const maxPrepSeconds = 3600;
@@ -101,6 +101,10 @@ async function togglePreparation(onComplete) {
   }
   const input = $('#prep-seconds');
   if (!input.reportValidity()) return;
+  if (usesScreen(state.recorderMode) && !canShareScreen()) {
+    $('#prep-status').textContent = screenUnavailableMessage();
+    return;
+  }
   savePreparationDuration(input);
   const run = { remaining:prepSeconds(), screen:null, timer:null };
   preparation = run;

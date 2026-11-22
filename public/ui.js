@@ -1,3 +1,5 @@
+import { state } from './state.js';
+
 const icons = {
   mic:'<rect x="9" y="2.75" width="6" height="12" rx="3"/><path d="M5.5 10.5v1.25a6.5 6.5 0 0 0 13 0V10.5M12 18.25v3m-3 0h6"/>',
   video:'<rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-3v10l-6-3"/>',
@@ -74,8 +76,22 @@ async function copyText(text, success) {
   toast(success);
 }
 
-function downloadFile(url, name) {
-  const a=document.createElement('a'); a.href=url; a.download=name; document.body.append(a); a.click(); a.remove();
+function downloadFile(source, name) {
+  const a = document.createElement('a');
+  if (source instanceof Blob) {
+    const url = URL.createObjectURL(source);
+    a.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } else {
+    const url = new URL(source, document.baseURI);
+    // Wry identifies a completed macOS download by its source URL.
+    if (state.app.desktop && state.app.platform === 'macos') url.searchParams.set('export', crypto.randomUUID());
+    a.href = url.href;
+  }
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
 }
 
 function dialog(title,content) {

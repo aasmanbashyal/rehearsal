@@ -31,6 +31,7 @@ The silent tour loops here. At **0:10** a cue card starts a recording, at **0:28
 | --- | --- |
 | Windows 11 x64 | [Run the installer](https://github.com/aasmanbashyal/rehearsal/releases/download/v0.3.0/Rehearsal-Setup-windows-x64.exe), then open **Rehearsal** from the Start menu. A [standalone ZIP](https://github.com/aasmanbashyal/rehearsal/releases/download/v0.3.0/Rehearsal-windows-x64-standalone.zip) is also available. |
 | Ubuntu 24.04 x64 | [Download the Debian package](https://github.com/aasmanbashyal/rehearsal/releases/download/v0.3.0/rehearsal_0.3.0-1_amd64.deb), then run `sudo apt install ./rehearsal_0.3.0-1_amd64.deb` in the download folder. |
+| macOS 12+ with Safari 16.2+ | Build `Rehearsal.app` with `./scripts/build-macos.sh` (see [build from source](docs/build.md#macos-12)), then drag **Rehearsal** from the DMG to Applications. Apple silicon and Intel are supported. |
 | Run from source | Install the [build prerequisites](docs/build.md#browser-mode), run `bun start`, and open [the local app](http://127.0.0.1:4317/). |
 
 Earlier releases used the name **ArticuPath**. [Release notes](https://github.com/aasmanbashyal/rehearsal/releases)

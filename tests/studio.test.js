@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { connect } from 'node:net';
 import { join } from 'node:path';
-import { cueCards } from '../public/cue-cards.js';
+import { cueCards, loadCueCards } from '../public/cue-cards.js';
 
 const project = join(import.meta.dir, '..');
 mkdirSync(join(project,'.cadence'),{ recursive:true });
@@ -47,6 +47,7 @@ const importMedia = async (file, compress = false, captureMode, script, cueId) =
   return result;
 };
 beforeAll(async()=>{
+  await loadCueCards();
   server=await startServer();
   state=await (await request('/api/state')).json();
 });
@@ -142,7 +143,7 @@ test('serves background assets only when background replacement is available', a
 test('serves the complete frontend module graph from the current source', async () => {
   const scanner = new Bun.Transpiler({ loader:'js' });
   const visited = new Set();
-  const pending = ['/app.js', '/screen-camera.js'];
+  const pending = ['/app.js', '/screen-camera.js', '/cue-data.json'];
   if (!state.lightMedia) pending.push('/background.js', '/background-worker.js');
   while (pending.length) {
     const path = pending.pop();

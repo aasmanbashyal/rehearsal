@@ -62,8 +62,8 @@ function bindPlayer(position, resume) {
   const elapsed = $('#play-time'), total = $('#play-duration');
   const duration = () => {
     const reported = Number.isFinite(media.duration) && media.duration > 0 ? media.duration : 0;
-    // WebKitGTK can expose only the first fragment's duration for a recorded MP4.
-    if (state.app.platform === 'linux' && state.active.mime?.endsWith('/mp4')) return Math.max(reported, state.active.duration);
+    // WebKit can expose only the first fragment's duration for a recorded MP4.
+    if (['linux', 'macos'].includes(state.app.platform) && state.active.mime?.endsWith('/mp4')) return Math.max(reported, state.active.duration);
     return reported || state.active.duration;
   };
   state.player = media;
@@ -196,8 +196,7 @@ function playAt(seconds) {
 function exportTranscript(type) {
   if(!state.active?.segments.length) return;
   const raw=type==='srt' ? state.active.segments.map((s,i)=>`${i+1}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${s.text}`).join('\n\n')+'\n' : plain(state.active);
-  const url=URL.createObjectURL(new Blob([raw],{type:'text/plain;charset=utf-8'}));
-  downloadFile(url,`${fileStem(state.active.title)}.${type}`); setTimeout(()=>URL.revokeObjectURL(url),5000);
+  downloadFile(new Blob([raw],{type:'text/plain;charset=utf-8'}), `${fileStem(state.active.title)}.${type}`);
 }
 
 export { bindPlayer, exportTranscript, filterTranscript, playAt, refreshTranscript, reviewHTML };

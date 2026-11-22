@@ -143,3 +143,24 @@ async fn media_and_delete_requests_can_finish_while_another_take_is_locked() {
     let response = pending.await;
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
 }
+
+#[test]
+fn reads_webkit_builds() {
+    // Safari 17.6 on Sonoma and on Monterey, then macOS 27's WebKit.
+    assert_eq!(
+        super::parse_webkit_version("19618.3.11.11.5"),
+        Some((618, 3))
+    );
+    assert_eq!(
+        super::parse_webkit_version("17618.3.11.11.7"),
+        Some((618, 3))
+    );
+    assert_eq!(
+        super::parse_webkit_version("22625.2.8.11.9\n"),
+        Some((625, 2))
+    );
+    assert!(super::parse_webkit_version("19618.2.12.11.6").is_some_and(|v| v < (618, 3)));
+    assert!(super::parse_webkit_version("17614.1.25.9.10").is_some_and(|v| v < (614, 3)));
+    assert_eq!(super::parse_webkit_version("614"), Some((614, 0)));
+    assert_eq!(super::parse_webkit_version("beta"), None);
+}
